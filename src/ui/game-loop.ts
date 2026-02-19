@@ -16,8 +16,10 @@ import { NPCS, getRandomEnemy } from '../data/npcs';
 import { getDistrictJobs, getJob } from '../data/jobs';
 import { getShopItems, getClinicAugmentations, getItem, ITEMS } from '../data/items';
 import { installAugmentation } from '../systems/character';
-import { formatCredits } from '../utils/format';
+import { formatCredits, divider, storyText, header } from '../utils/format';
 import { chance, roll } from '../utils/dice';
+import { awardStreetCred, getCombatStreetCred, getTierName, getTierDescription, getActName } from '../systems/progression';
+import { getAvailableMilestones } from '../data/milestones';
 
 export class GameLoop {
   private state!: GameState;
@@ -228,6 +230,9 @@ export class GameLoop {
     if (ambience.trim()) {
       console.log(ambience);
     }
+
+    // Check for milestone events (narrative progression)
+    await this.checkMilestones();
 
     // Check for random event
     const event = rollForEvent(this.state);
@@ -594,9 +599,9 @@ export class GameLoop {
     console.log(chalk.italic('  You venture into the dark alleys...'));
 
     if (chance(0.4)) {
-      // Combat encounter
+      // Combat encounter — scales with player level
       const district = getDistrict(this.state.character.currentDistrict);
-      const enemy = getRandomEnemy(district?.danger ?? 'medium');
+      const enemy = getRandomEnemy(district?.danger ?? 'medium', this.state.character.level);
       console.log(chalk.red(`\n  An enemy appears: ${enemy.name}!`));
       await this.runCombat(enemy);
     } else if (chance(0.3)) {
@@ -765,7 +770,7 @@ export class GameLoop {
 
       if (result.combatTriggered) {
         const district = getDistrict(this.state.character.currentDistrict);
-        const enemy = getRandomEnemy(district?.danger ?? 'medium');
+        const enemy = getRandomEnemy(district?.danger ?? 'medium', this.state.character.level);
         await this.runCombat(enemy);
       }
     }
@@ -799,10 +804,10 @@ export class GameLoop {
     await playTravelAnimation(fromDistrict, district.name);
     messages.forEach(m => console.log(`  ${m}`));
 
-    // Chance of encounter while traveling
+    // Chance of encounter while traveling — scales with player level
     if (chance(0.2)) {
       console.log(chalk.yellow('\n  Trouble on the road!'));
-      const enemy = getRandomEnemy(district.danger);
+      const enemy = getRandomEnemy(district.danger, this.state.character.level);
       await this.runCombat(enemy);
     }
     waitForKey();
@@ -873,7 +878,7 @@ export class GameLoop {
   }
 
   private characterMenu(): void {
-    showCharacterSheet(this.state.character);
+    showCharacterSheet(this.state.character, this.state.progression);
     waitForKey();
   }
 
@@ -972,7 +977,7 @@ export class GameLoop {
     // Update character health from combat
     this.state.character.health = combat.playerHealth;
 
-    // Handle rewards
+    // Handle rewards and progression
     if (!combat.fled && combat.enemyHealth <= 0) {
       // Victory
       this.music.play('victory', false);
@@ -989,8 +994,27 @@ export class GameLoop {
         }
       }
 
+      // Street cred for combat victory
+      if (this.state.progression) {
+        this.state.progression.enemiesDefeated++;
+        const credResult = awardStreetCred(
+          this.state,
+          getCombatStreetCred(enemy.level),
+          `defeating ${enemy.name}`
+        );
+        for (const msg of credResult.messages) {
+          console.log(chalk.magenta(`  ${msg}`));
+        }
+        if (credResult.tierChanged && credResult.newTier) {
+          await this.showTierTransition(credResult.newTier, credResult.newAct);
+        }
+      }
+
       addLogEntry(this.state, `Defeated ${enemy.name}. Earned ¥${rewards.credits}.`, 'combat');
     } else if (combat.fled) {
+      if (this.state.progression) {
+        this.state.progression.enemiesFledFrom++;
+      }
       addLogEntry(this.state, `Fled from ${enemy.name}.`, 'combat');
     } else {
       addLogEntry(this.state, `Defeated by ${enemy.name}.`, 'danger');
@@ -1000,6 +1024,79 @@ export class GameLoop {
 
     // Return to exploration music
     this.music.play('exploration');
+  }
+
+  private async checkMilestones(): Promise<void> {
+    if (!this.state.progression) return;
+
+    const milestones = getAvailableMilestones(this.state);
+    if (milestones.length === 0) return;
+
+    // Present the first available milestone (one per turn)
+    const milestone = milestones[0];
+    await this.handleMilestone(milestone);
+  }
+
+  private async handleMilestone(milestone: GameEvent): Promise<void> {
+    // Dramatic presentation for milestones
+    console.log('');
+    console.log(chalk.magenta(divider('═')));
+    console.log(chalk.magentaBright.bold(`\n  ★ MILESTONE: ${milestone.title.toUpperCase()} ★\n`));
+    console.log(storyText(`  ${milestone.description}`));
+    console.log('');
+    console.log(chalk.magenta(divider('─')));
+
+    // Show choices
+    const options: MenuOption[] = milestone.choices.map(c => ({
+      key: c.id,
+      label: c.text,
+      description: c.skillCheck ? `[${c.skillCheck.skill} check]` : c.statCheck ? `[${c.statCheck.stat} check]` : undefined,
+    }));
+
+    const choice = showMenu('Your choice shapes the story', options);
+
+    // Track pivotal choice
+    if (this.state.progression) {
+      this.state.progression.pivotalChoices[milestone.id] = choice;
+      this.state.progression.completedMilestones.push(milestone.id);
+    }
+
+    // Resolve using the event system
+    const messages = resolveChoice(this.state, milestone, choice);
+    console.log('');
+    for (const msg of messages) {
+      console.log(chalk.white(`  ${msg}`));
+    }
+
+    console.log(chalk.magenta(divider('═')));
+    addLogEntry(this.state, `Milestone: ${milestone.title}`, 'story');
+    waitForKey();
+  }
+
+  private async showTierTransition(newTier: import('../types').ReputationTier, newAct?: 1 | 2 | 3): Promise<void> {
+    console.log('');
+    console.log(chalk.magenta(divider('═')));
+    console.log(chalk.magentaBright.bold(`\n  ▲ REPUTATION TIER REACHED ▲`));
+    console.log(chalk.yellowBright.bold(`\n  ${getTierName(newTier).toUpperCase()}`));
+    console.log(chalk.italic.white(`  "${getTierDescription(newTier)}"`));
+
+    if (newAct) {
+      console.log(chalk.magentaBright(`\n  ═══ ACT ${newAct}: ${getActName(newAct)} ═══`));
+      switch (newAct) {
+        case 1:
+          console.log(storyText('  The city doesn\'t know your name. Yet.'));
+          break;
+        case 2:
+          console.log(storyText('  You\'re someone now. That means you\'re also a target.'));
+          break;
+        case 3:
+          console.log(storyText('  The question is no longer whether you\'ll survive. It\'s what you\'ll leave behind.'));
+          break;
+      }
+    }
+
+    console.log(chalk.magenta(divider('═')));
+    waitForKey();
   }
 
   private saveMenu(): void {

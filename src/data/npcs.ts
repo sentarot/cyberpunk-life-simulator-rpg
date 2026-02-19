@@ -197,8 +197,11 @@ export function getEnemy(id: string): Enemy | undefined {
   return ENEMIES[id];
 }
 
-export function getRandomEnemy(districtDanger: string): Enemy {
-  switch (districtDanger) {
+export function getRandomEnemy(districtDanger: string, playerLevel?: number): Enemy {
+  // Scale enemy pool based on player level
+  const effectiveDanger = scaleEnemyDanger(districtDanger, playerLevel ?? 1);
+
+  switch (effectiveDanger) {
     case 'low':
       return ENEMIES.street_thug;
     case 'medium':
@@ -208,8 +211,18 @@ export function getRandomEnemy(districtDanger: string): Enemy {
       return highEnemies[Math.floor(Math.random() * highEnemies.length)];
     case 'extreme':
       const extremeEnemies = [ENEMIES.maelstrom_soldier, ENEMIES.cyberpsycho, ENEMIES.rogue_ai_drone];
+      if (playerLevel && playerLevel >= 7 && Math.random() < 0.15) {
+        return ENEMIES.chrome_demon;
+      }
       return extremeEnemies[Math.floor(Math.random() * extremeEnemies.length)];
     default:
       return ENEMIES.street_thug;
   }
+}
+
+function scaleEnemyDanger(baseDanger: string, playerLevel: number): string {
+  if (playerLevel >= 7 && baseDanger === 'low') return 'medium';
+  if (playerLevel >= 5 && baseDanger === 'medium') return 'high';
+  if (playerLevel >= 8 && baseDanger === 'high') return 'extreme';
+  return baseDanger;
 }

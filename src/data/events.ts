@@ -468,6 +468,9 @@ function checkEventCondition(state: import('../types').GameState, cond: import('
     case 'day':
       actual = state.currentDay;
       break;
+    case 'street_cred':
+      actual = state.progression?.streetCred ?? 0;
+      break;
     default:
       return true;
   }

@@ -1,5 +1,6 @@
 import { GameState, Character, GameSettings, TimeOfDay, LogEntry, EventOutcome, StatName, SkillName } from '../types';
 import { clamp } from '../utils/dice';
+import { createInitialProgression } from '../systems/progression';
 
 const DEFAULT_SETTINGS: GameSettings = {
   difficulty: 'normal',
@@ -17,6 +18,7 @@ export function createInitialState(character: Character): GameState {
     eventCooldowns: {},
     gameLog: [],
     settings: { ...DEFAULT_SETTINGS },
+    progression: createInitialProgression(),
   };
 }
 
@@ -115,6 +117,12 @@ export function applyOutcome(state: GameState, outcome: EventOutcome): string {
     case 'trait':
       if (outcome.target && !char.traits.includes(outcome.target)) {
         char.traits.push(outcome.target);
+      }
+      return outcome.message;
+
+    case 'street_cred':
+      if (state.progression) {
+        state.progression.streetCred += value;
       }
       return outcome.message;
 

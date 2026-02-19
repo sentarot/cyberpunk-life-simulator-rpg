@@ -2,6 +2,7 @@ import { Character, Job, GameState, Item, JobRisk, SkillName } from '../types';
 import { check, chance, roll } from '../utils/dice';
 import { getEffectiveSkill, getEffectiveStat, getDifficultyModifier, applyOutcome, addLogEntry } from '../engine/state';
 import { addItem, removeItem } from './character';
+import { awardStreetCred, getJobStreetCred } from './progression';
 
 export function canTakeJob(state: GameState, job: Job): { eligible: boolean; reason?: string } {
   const char = state.character;
@@ -75,6 +76,13 @@ export function executeJob(state: GameState, job: Job): { success: boolean; mess
     char.skills[primarySkill] = Math.min(100, char.skills[primarySkill] + skillGain);
     messages.push(`${primarySkill} skill +${skillGain}`);
 
+    // Street cred
+    if (state.progression) {
+      state.progression.jobsCompleted++;
+      const credResult = awardStreetCred(state, getJobStreetCred(job.difficulty, true), job.name);
+      messages.push(...credResult.messages);
+    }
+
     addLogEntry(state, `Completed job: ${job.name}`, 'reward');
   } else {
     messages.push(`Job failed! (Rolled ${result.roll} + ${modifier} = ${result.total} vs ${difficulty})`);
@@ -83,6 +91,13 @@ export function executeJob(state: GameState, job: Job): { success: boolean; mess
     const partialPay = Math.floor(job.payCredits * 0.2);
     char.credits += partialPay;
     messages.push(`Received partial payment: ¥${partialPay}`);
+
+    // Street cred (small amount for attempting)
+    if (state.progression) {
+      state.progression.jobsFailed++;
+      const credResult = awardStreetCred(state, getJobStreetCred(job.difficulty, false), job.name);
+      messages.push(...credResult.messages);
+    }
 
     // Check risks
     for (const risk of job.risks) {

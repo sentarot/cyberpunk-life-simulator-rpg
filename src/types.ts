@@ -193,7 +193,8 @@ export type EventCategory =
   | 'job'
   | 'faction'
   | 'personal'
-  | 'world';
+  | 'world'
+  | 'milestone';
 
 export interface GameEvent {
   id: string;
@@ -238,13 +239,31 @@ export type EventOutcomeType =
   | 'contact'
   | 'trait'
   | 'humanity'
+  | 'street_cred'
   | 'message';
 
 export interface EventCondition {
-  type: 'stat' | 'skill' | 'reputation' | 'item' | 'quest' | 'district' | 'trait' | 'level' | 'credits' | 'day';
+  type: 'stat' | 'skill' | 'reputation' | 'item' | 'quest' | 'district' | 'trait' | 'level' | 'credits' | 'day' | 'street_cred';
   target: string;
   operator: '>=' | '<=' | '==' | '!=' | '>' | '<';
   value: number | string;
+}
+
+// --- Progression Types ---
+
+export type ReputationTier = 'nobody' | 'prospect' | 'operator' | 'player' | 'veteran' | 'elite' | 'legend';
+
+export interface ProgressionState {
+  streetCred: number;
+  tier: ReputationTier;
+  act: 1 | 2 | 3;
+  completedMilestones: string[];
+  tierReachedDay: Partial<Record<ReputationTier, number>>;
+  jobsCompleted: number;
+  jobsFailed: number;
+  enemiesDefeated: number;
+  enemiesFledFrom: number;
+  pivotalChoices: Record<string, string>; // milestoneId -> choiceId
 }
 
 // --- Job Types ---
@@ -319,6 +338,7 @@ export interface GameState {
   eventCooldowns: Record<string, number>; // eventId -> day available
   gameLog: LogEntry[];
   settings: GameSettings;
+  progression: ProgressionState;
 }
 
 export type TimeOfDay = 'morning' | 'afternoon' | 'evening' | 'night';

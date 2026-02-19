@@ -1,9 +1,10 @@
 import chalk from 'chalk';
-import { GameState, Character, CombatState, Enemy, Job, NPC, Augmentation, Item } from '../types';
+import { GameState, Character, CombatState, Enemy, Job, NPC, Augmentation, Item, ProgressionState } from '../types';
 import { formatCredits, formatHealth, formatHumanity, formatTime, formatDanger, formatStatValue, formatRarity, header, sectionHeader, divider, successMsg, failMsg, warnMsg, storyText, npcDialogue, progressBar } from '../utils/format';
 import { getDistrict } from '../data/districts';
 import { getFaction, getFactionStanding, FACTIONS } from '../data/factions';
 import { getXPForLevel } from '../engine/state';
+import { getTierName, getActName, getNextTierCred } from '../systems/progression';
 
 export function showTitleScreen(): void {
   console.log(chalk.cyan(`
@@ -31,6 +32,7 @@ export function showHUD(state: GameState): void {
   const district = getDistrict(char.currentDistrict);
   const districtName = district?.name ?? char.currentDistrict;
   const danger = district?.danger ?? 'medium';
+  const prog = state.progression;
 
   console.log(divider('═'));
   console.log(
@@ -43,11 +45,50 @@ export function showHUD(state: GameState): void {
     `  Day ${state.currentDay} ${chalk.gray('|')} ${formatTime(state.currentTime)} ` +
     `${chalk.gray('|')} ${chalk.white(districtName)} ${chalk.gray('[')}Danger: ${formatDanger(danger)}${chalk.gray(']')}`
   );
+  if (prog) {
+    const tierStr = formatTier(prog);
+    const nextCred = getNextTierCred(prog.tier);
+    const credProgress = nextCred ? ` (${prog.streetCred}/${nextCred})` : ` (${prog.streetCred})`;
+    console.log(
+      `  ${chalk.magenta('Act ' + prog.act + ': ' + getActName(prog.act))} ` +
+      `${chalk.gray('|')} ${tierStr}${chalk.gray(credProgress)} ` +
+      `${chalk.gray('|')} Jobs: ${prog.jobsCompleted} ${chalk.gray('|')} Kills: ${prog.enemiesDefeated}`
+    );
+  }
   console.log(divider('═'));
 }
 
-export function showCharacterSheet(char: Character): void {
+function formatTier(prog: ProgressionState): string {
+  const name = getTierName(prog.tier);
+  switch (prog.tier) {
+    case 'nobody': return chalk.gray(name);
+    case 'prospect': return chalk.white(name);
+    case 'operator': return chalk.cyan(name);
+    case 'player': return chalk.green(name);
+    case 'veteran': return chalk.yellow(name);
+    case 'elite': return chalk.magentaBright(name);
+    case 'legend': return chalk.yellowBright.bold(name);
+  }
+}
+
+export function showCharacterSheet(char: Character, prog?: ProgressionState): void {
   console.log(header(`${char.name} - Character Sheet`));
+
+  if (prog) {
+    console.log(sectionHeader('STREET CRED'));
+    const tierStr = formatTier(prog);
+    const nextCred = getNextTierCred(prog.tier);
+    const credBar = nextCred
+      ? progressBar(prog.streetCred, nextCred, 20)
+      : chalk.yellowBright(`${prog.streetCred} (MAX)`);
+    console.log(`  Tier:         ${tierStr}`);
+    console.log(`  Street Cred:  ${credBar}`);
+    console.log(`  Act:          ${chalk.magenta(`${prog.act}: ${getActName(prog.act)}`)}`);
+    console.log(`  Jobs Done:    ${prog.jobsCompleted} ${chalk.gray('|')} Enemies Defeated: ${prog.enemiesDefeated}`);
+    if (prog.completedMilestones.length > 0) {
+      console.log(`  Milestones:   ${prog.completedMilestones.length} completed`);
+    }
+  }
 
   console.log(sectionHeader('STATS'));
   console.log(`  Body:         ${formatStatValue(char.stats.body).padEnd(15)} Reflexes:      ${formatStatValue(char.stats.reflexes)}`);
@@ -203,6 +244,9 @@ export function showAugmentation(aug: Augmentation, index: number): void {
 }
 
 export function showGameOver(state: GameState): void {
+  const prog = state.progression;
+  const tierLabel = prog ? getTierName(prog.tier) : 'Unknown';
+  const credLabel = prog ? String(prog.streetCred) : '0';
   console.log(chalk.red(`
   ╔══════════════════════════════════════════════════════════╗
   ║                                                          ║
@@ -211,8 +255,11 @@ export function showGameOver(state: GameState): void {
   ║    ${state.character.name.padEnd(40)}        ║
   ║    Survived ${String(state.character.daysSurvived).padEnd(5)} days in the city              ║
   ║    Reached Level ${String(state.character.level).padEnd(33)}       ║
+  ║    Final Tier: ${tierLabel.padEnd(35)}       ║
+  ║    Street Cred: ${credLabel.padEnd(33)}       ║
   ║    Final Credits: ¥${String(state.character.credits).padEnd(30)}       ║
-  ║    Quests Completed: ${String(state.character.completedQuests.length).padEnd(28)}       ║
+  ║    Jobs Completed: ${String(prog?.jobsCompleted ?? 0).padEnd(30)}       ║
+  ║    Enemies Defeated: ${String(prog?.enemiesDefeated ?? 0).padEnd(28)}       ║
   ║                                                          ║
   ╚══════════════════════════════════════════════════════════╝
   `));

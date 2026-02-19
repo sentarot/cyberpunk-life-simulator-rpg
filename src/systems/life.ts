@@ -2,6 +2,7 @@ import { GameState, TimeOfDay } from '../types';
 import { chance, roll, clamp } from '../utils/dice';
 import { addLogEntry, advanceTime } from '../engine/state';
 import { processDailyExpenses } from './economy';
+import { awardStreetCred, getSurvivalStreetCred } from './progression';
 
 export function rest(state: GameState): string[] {
   const messages: string[] = [];
@@ -52,6 +53,15 @@ export function processNewDay(state: GameState): string[] {
     if (chance(0.1)) {
       state.character.health -= roll(5, 15);
       messages.push('Cyberpsychosis episode! Lost HP.');
+    }
+  }
+
+  // Survival street cred
+  if (state.progression) {
+    const survivalCred = getSurvivalStreetCred(state.character.daysSurvived);
+    if (survivalCred > 0) {
+      const credResult = awardStreetCred(state, survivalCred, 'survival');
+      messages.push(...credResult.messages);
     }
   }
 
