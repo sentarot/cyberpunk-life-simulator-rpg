@@ -9,6 +9,8 @@ import { initCombat, playerAttack, enemyAttack, playerHack, attemptFlee, process
 import { rest, processNewDay, travelToDistrict, gamble, rentApartment } from '../systems/life';
 import { showTitleScreen, showHUD, showCharacterSheet, showInventory, showDistrictInfo, showCombatHUD, showJobDetails, showFactionStandings, showNPCDialogue, showShopItem, showAugmentation, showGameOver, showLog } from './screens';
 import { showMenu, prompt, promptNumber, confirmAction, waitForKey, clearScreen } from './input';
+import { playTitleAnimation, playBootSequence, playAttackAnimation, playHackAnimation, playDamageFlash, playDeathAnimation, playTravelAnimation, playEventIntro, playLevelUpAnimation, getDistrictAmbience, glitchText, cursor } from './animation';
+import { MusicManager, TrackName } from '../audio/music';
 import { DISTRICTS, getDistrict } from '../data/districts';
 import { NPCS, getRandomEnemy } from '../data/npcs';
 import { getDistrictJobs, getJob } from '../data/jobs';
@@ -20,8 +22,43 @@ import { chance, roll } from '../utils/dice';
 export class GameLoop {
   private state!: GameState;
   private running: boolean = true;
+  private music: MusicManager;
+  private musicAvailable: boolean = false;
+  private previousLevel: number = 1;
+
+  constructor() {
+    this.music = new MusicManager();
+    this.musicAvailable = this.music.isAvailable();
+  }
 
   async start(): Promise<void> {
+    // Setup cleanup handler
+    process.on('exit', () => {
+      cursor.show();
+      this.music.cleanup();
+    });
+    process.on('SIGINT', () => {
+      cursor.show();
+      this.music.stop();
+      this.music.cleanup();
+      process.exit(0);
+    });
+
+    clearScreen();
+
+    // Generate music in background if available
+    if (this.musicAvailable) {
+      console.log(chalk.gray('  Generating soundtrack...'));
+      this.music.pregenerateAll();
+      console.log(chalk.green('  Soundtrack ready.'));
+    }
+
+    // Animated title sequence
+    await playTitleAnimation(4000);
+
+    // Start title music
+    this.music.play('title');
+
     clearScreen();
     showTitleScreen();
 
@@ -33,18 +70,29 @@ export class GameLoop {
 
     switch (mainChoice) {
       case '1':
+        this.music.stop();
+        // Boot sequence animation
+        clearScreen();
+        await playBootSequence();
+        waitForKey();
         this.state = this.characterCreation();
         break;
       case '2':
+        this.music.stop();
         const loaded = this.loadGameMenu();
         if (!loaded) {
           console.log(chalk.yellow('No save found. Starting new game.'));
+          clearScreen();
+          await playBootSequence();
+          waitForKey();
           this.state = this.characterCreation();
         } else {
           this.state = loaded;
         }
         break;
       case '3':
+        this.music.stop();
+        this.music.cleanup();
         console.log(chalk.cyan('Disconnecting from the Net...'));
         return;
     }
@@ -53,11 +101,17 @@ export class GameLoop {
 
     // Give starter items based on origin
     this.giveStarterItems();
+    this.previousLevel = this.state.character.level;
+
+    // Start exploration music
+    this.music.play('exploration');
 
     // Main game loop
     while (this.running) {
-      this.gameTurn();
+      await this.gameTurn();
     }
+
+    this.music.cleanup();
   }
 
   private characterCreation(): GameState {
@@ -141,12 +195,21 @@ export class GameLoop {
     equipItem(char, ITEMS.leather_jacket);
   }
 
-  private gameTurn(): void {
+  private async gameTurn(): Promise<void> {
     // Check game over
     if (this.state.character.health <= 0) {
+      this.music.stop();
+      await playDeathAnimation();
+      this.music.play('gameover', false);
       showGameOver(this.state);
       this.running = false;
       return;
+    }
+
+    // Check for level up
+    if (this.state.character.level > this.previousLevel) {
+      await playLevelUpAnimation(this.state.character.level);
+      this.previousLevel = this.state.character.level;
     }
 
     // Process new day if morning
@@ -160,17 +223,30 @@ export class GameLoop {
     // Show HUD
     showHUD(this.state);
 
+    // Show district ambience
+    const ambience = getDistrictAmbience(this.state.character.currentDistrict);
+    if (ambience.trim()) {
+      console.log(ambience);
+    }
+
     // Check for random event
     const event = rollForEvent(this.state);
     if (event) {
-      this.handleEvent(event);
+      await this.handleEvent(event);
     }
 
     // Main action menu
-    this.mainMenu();
+    await this.mainMenu();
 
     // Advance time
     this.state = advanceTime(this.state);
+
+    // Switch to dark ambient at night
+    if (this.state.currentTime === 'night') {
+      this.music.play('dark_ambient');
+    } else if (this.state.currentTime === 'morning') {
+      this.music.play('exploration');
+    }
 
     // Auto-save
     if (this.state.settings.autoSave && this.state.currentTime === 'morning') {
@@ -178,7 +254,8 @@ export class GameLoop {
     }
   }
 
-  private mainMenu(): void {
+  private async mainMenu(): Promise<void> {
+    const musicLabel = this.music.enabled ? 'Music OFF' : 'Music ON';
     const options: MenuOption[] = [
       { key: 'e', label: 'Explore District', description: 'Look around the current area' },
       { key: 'j', label: 'Jobs', description: 'Find work' },
@@ -188,6 +265,7 @@ export class GameLoop {
       { key: 'f', label: 'Factions', description: 'View faction standings' },
       { key: 'l', label: 'Log', description: 'View recent events' },
       { key: 'r', label: 'Rest', description: 'Rest and recover health' },
+      { key: 'm', label: musicLabel, description: 'Toggle soundtrack' },
       { key: 's', label: 'Save', description: 'Save your game' },
       { key: 'q', label: 'Quit', description: 'Save and quit' },
     ];
@@ -195,20 +273,31 @@ export class GameLoop {
     const choice = showMenu('What do you do?', options);
 
     switch (choice) {
-      case 'e': this.exploreDistrict(); break;
-      case 'j': this.jobMenu(); break;
-      case 't': this.travelMenu(); break;
+      case 'e': await this.exploreDistrict(); break;
+      case 'j': await this.jobMenu(); break;
+      case 't': await this.travelMenu(); break;
       case 'i': this.inventoryMenu(); break;
       case 'c': this.characterMenu(); break;
       case 'f': showFactionStandings(this.state.character); waitForKey(); break;
       case 'l': showLog(this.state, 15); waitForKey(); break;
       case 'r': this.restAction(); break;
+      case 'm': this.toggleMusic(); break;
       case 's': this.saveMenu(); break;
       case 'q': this.quitGame(); break;
     }
   }
 
-  private exploreDistrict(): void {
+  private toggleMusic(): void {
+    this.music.enabled = !this.music.enabled;
+    if (this.music.enabled) {
+      console.log(chalk.cyan('  ♪ Music enabled. Jacking into the soundwave...'));
+      this.music.play('exploration');
+    } else {
+      console.log(chalk.gray('  ♪ Music disabled. Silence falls.'));
+    }
+  }
+
+  private async exploreDistrict(): Promise<void> {
     showDistrictInfo(this.state);
 
     const district = getDistrict(this.state.character.currentDistrict);
@@ -231,10 +320,10 @@ export class GameLoop {
     console.log(`\n  ${chalk.bold(location.name)}`);
     console.log(`  ${chalk.italic(location.description)}`);
 
-    this.handleLocation(location.type, location.id);
+    await this.handleLocation(location.type, location.id);
   }
 
-  private handleLocation(type: string, locationId: string): void {
+  private async handleLocation(type: string, locationId: string): Promise<void> {
     switch (type) {
       case 'bar':
         this.barMenu();
@@ -258,7 +347,7 @@ export class GameLoop {
         this.workshopMenu();
         break;
       case 'alley':
-        this.alleyExplore();
+        await this.alleyExplore();
         break;
       case 'apartment':
         this.apartmentMenu();
@@ -501,7 +590,7 @@ export class GameLoop {
     waitForKey();
   }
 
-  private alleyExplore(): void {
+  private async alleyExplore(): Promise<void> {
     console.log(chalk.italic('  You venture into the dark alleys...'));
 
     if (chance(0.4)) {
@@ -509,7 +598,7 @@ export class GameLoop {
       const district = getDistrict(this.state.character.currentDistrict);
       const enemy = getRandomEnemy(district?.danger ?? 'medium');
       console.log(chalk.red(`\n  An enemy appears: ${enemy.name}!`));
-      this.runCombat(enemy);
+      await this.runCombat(enemy);
     } else if (chance(0.3)) {
       // Find something
       const creds = roll(20, 100);
@@ -632,7 +721,7 @@ export class GameLoop {
     }
   }
 
-  private jobMenu(): void {
+  private async jobMenu(): Promise<void> {
     const jobs = getDistrictJobs(this.state.character.currentDistrict);
 
     if (jobs.length === 0) {
@@ -677,13 +766,13 @@ export class GameLoop {
       if (result.combatTriggered) {
         const district = getDistrict(this.state.character.currentDistrict);
         const enemy = getRandomEnemy(district?.danger ?? 'medium');
-        this.runCombat(enemy);
+        await this.runCombat(enemy);
       }
     }
     waitForKey();
   }
 
-  private travelMenu(): void {
+  private async travelMenu(): Promise<void> {
     console.log(chalk.bold('\n  === TRAVEL ==='));
     console.log(chalk.gray('  Transit cost: ¥20 per district\n'));
 
@@ -703,14 +792,18 @@ export class GameLoop {
     const district = DISTRICTS[districtIndex];
     if (!district) return;
 
+    const fromDistrict = getDistrict(this.state.character.currentDistrict)?.name ?? this.state.character.currentDistrict;
     const messages = travelToDistrict(this.state, district.id);
+
+    // Animated travel transition
+    await playTravelAnimation(fromDistrict, district.name);
     messages.forEach(m => console.log(`  ${m}`));
 
     // Chance of encounter while traveling
     if (chance(0.2)) {
       console.log(chalk.yellow('\n  Trouble on the road!'));
       const enemy = getRandomEnemy(district.danger);
-      this.runCombat(enemy);
+      await this.runCombat(enemy);
     }
     waitForKey();
   }
@@ -790,8 +883,10 @@ export class GameLoop {
     waitForKey();
   }
 
-  private handleEvent(event: GameEvent): void {
-    console.log(chalk.bold.yellow(`\n  === ${event.title} ===`));
+  private async handleEvent(event: GameEvent): Promise<void> {
+    // Animated event intro
+    console.log('');
+    await playEventIntro(event.title);
     console.log(chalk.italic(`  ${event.description}\n`));
 
     const options: MenuOption[] = event.choices.map(c => ({
@@ -809,9 +904,12 @@ export class GameLoop {
     waitForKey();
   }
 
-  private runCombat(enemyTemplate: Enemy): void {
+  private async runCombat(enemyTemplate: Enemy): Promise<void> {
     const enemy = { ...enemyTemplate };
     const combat = initCombat(this.state.character, enemy);
+
+    // Switch to combat music
+    this.music.play('combat');
 
     while (!combat.resolved) {
       showCombatHUD(combat, this.state.character);
@@ -828,9 +926,11 @@ export class GameLoop {
 
       switch (choice) {
         case '1':
+          await playAttackAnimation();
           messages = playerAttack(this.state, combat, enemy);
           break;
         case '2':
+          await playHackAnimation();
           messages = playerHack(this.state, combat, enemy);
           break;
         case '3':
@@ -855,6 +955,10 @@ export class GameLoop {
       // Enemy turn if combat not resolved
       if (!combat.resolved && choice !== '4') {
         const enemyMessages = enemyAttack(this.state, combat, enemy);
+        // Show damage flash if player got hit
+        if (enemyMessages.some(m => m.includes('hits you'))) {
+          await playDamageFlash();
+        }
         enemyMessages.forEach(m => console.log(`  ${m}`));
       }
 
@@ -870,6 +974,8 @@ export class GameLoop {
 
     // Handle rewards
     if (!combat.fled && combat.enemyHealth <= 0) {
+      // Victory
+      this.music.play('victory', false);
       const rewards = getCombatRewards(enemy);
       this.state.character.credits += rewards.credits;
       this.state.character.experience += rewards.experience;
@@ -891,6 +997,9 @@ export class GameLoop {
     }
 
     waitForKey();
+
+    // Return to exploration music
+    this.music.play('exploration');
   }
 
   private saveMenu(): void {
@@ -909,6 +1018,8 @@ export class GameLoop {
       saveGame(this.state);
       console.log(chalk.green('  Game saved.'));
     }
+    this.music.stop();
+    this.music.cleanup();
     console.log(chalk.cyan('\n  Disconnecting from the Net... Stay safe out there, choom.'));
     this.running = false;
   }

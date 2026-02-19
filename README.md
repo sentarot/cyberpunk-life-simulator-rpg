@@ -16,6 +16,8 @@ A terminal-based cyberpunk life simulator RPG set in a dystopian future megacity
 - **Economy** - Earn credits, buy gear, sell loot, gamble, and manage daily expenses
 - **Life Simulation** - Rent apartments, rest, travel between districts, and watch the days pass
 - **Save/Load** - Multiple save slots with autosave support
+- **Animated ASCII Art** - Glitch effects, neon sign flicker, cyber rain, scanline distortion, boot sequence, combat animations, travel transitions, and per-district ambient visuals
+- **Procedural Synthwave Soundtrack** - Dark synth / Perturbator-style music generated in real-time using PCM audio synthesis with sawtooth/square/pulse oscillators, ADSR envelopes, distortion, filters, delay, and chorus. Separate tracks for title, exploration, combat, dark ambient, victory, and game over. Toggle with [M] in-game
 
 ## Installation
 
@@ -70,11 +72,24 @@ src/
 │   ├── npcs.ts           # NPCs and enemies
 │   ├── jobs.ts           # Available jobs
 │   └── events.ts         # Random event definitions
+├── audio/
+│   ├── synth.ts          # PCM waveform synthesis engine
+│   ├── music.ts          # Procedural dark synth music composer
+│   └── wav.ts            # WAV file generation and playback
 ├── ui/
-│   ├── game-loop.ts      # Main game loop
+│   ├── game-loop.ts      # Main game loop with music/animation integration
+│   ├── animation.ts      # ASCII animation engine (glitch, rain, neon, etc.)
 │   ├── screens.ts        # Display functions
 │   └── input.ts          # Input handling
 └── utils/
     ├── dice.ts           # Random number utilities
     └── format.ts         # Text formatting with chalk
 ```
+
+## Audio
+
+The game generates a Perturbator/Carpenter Brut-style dark synthwave soundtrack procedurally at startup using raw PCM synthesis. No audio files are bundled - all music is created mathematically from oscillators, envelopes, and effects.
+
+The audio system auto-detects available playback tools (`aplay`, `paplay`, `play`, `ffplay`, `mpv`) and gracefully degrades to silent mode if none are found. Generated WAV files are cached in `.audio_cache/` and cleaned up on exit.
+
+Press **[M]** in-game to toggle music on/off.
