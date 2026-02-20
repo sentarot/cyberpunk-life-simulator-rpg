@@ -1,4 +1,6 @@
 import { GameEvent } from '../types';
+import { getFaction, getFactionStanding } from './factions';
+import { getDistrict } from './districts';
 
 export const EVENTS: GameEvent[] = [
   // --- Random Encounters ---
@@ -372,6 +374,208 @@ export const EVENTS: GameEvent[] = [
       },
     ],
   },
+  // --- Faction Events ---
+  {
+    id: 'faction_ally_aid', title: 'A Friend on the Street', category: 'faction',
+    description: 'A figure in faction colors flags you down. "Hey, you\'re that runner, right? Our people told us to look out for you. We\'ve got something that might help."',
+    conditions: [], // Dynamically gated by faction standing (Friendly+) in event system
+    weight: 6, repeatable: true, cooldownDays: 5,
+    choices: [
+      {
+        id: 'accept', text: 'Accept their help',
+        outcomes: {
+          success: [
+            { type: 'health', value: 20, message: 'They patch you up. +20 HP.' },
+            { type: 'credits', value: 150, message: 'They slip you ¥150 for the road.' },
+            { type: 'message', message: '"Stay safe out there, choom. The family looks after its own."' },
+          ],
+        },
+      },
+      {
+        id: 'info', text: 'Ask for intel instead',
+        outcomes: {
+          success: [
+            { type: 'experience', value: 30, message: '+30 XP from faction intel.' },
+            { type: 'skill', target: 'streetwise', value: 2, message: 'Streetwise +2' },
+            { type: 'message', message: 'They share details about upcoming jobs and danger zones. Valuable information.' },
+          ],
+        },
+      },
+      {
+        id: 'decline', text: 'Thanks, but I work alone.',
+        outcomes: {
+          success: [
+            { type: 'message', message: 'They shrug and melt back into the crowd. The offer stands.' },
+          ],
+        },
+      },
+    ],
+  },
+  {
+    id: 'faction_territory_tax', title: 'Territory Tax', category: 'faction',
+    description: 'A group of armed gang members blocks your path. Their leader steps forward, eyes cold. "You\'re on our turf. Uninvited. There\'s a cost for that."',
+    conditions: [], // Dynamically gated by faction standing (Hostile-) in game loop
+    weight: 8, repeatable: true, cooldownDays: 3,
+    choices: [
+      {
+        id: 'pay', text: 'Pay the tax (¥200)',
+        outcomes: {
+          success: [
+            { type: 'credits', value: -200, message: 'Paid ¥200 "protection tax."' },
+            { type: 'message', message: 'The leader pockets the creds. "Smart. Now get moving." They let you pass.' },
+          ],
+        },
+      },
+      {
+        id: 'fight', text: 'Fight your way through',
+        skillCheck: { skill: 'combat', difficulty: 16 },
+        outcomes: {
+          success: [
+            { type: 'message', message: 'You put them down hard. Word will spread — this runner doesn\'t pay tax.' },
+            { type: 'experience', value: 40, message: '+40 XP' },
+            { type: 'credits', value: 100, message: 'Looted ¥100 from the shakedown crew.' },
+            { type: 'street_cred', value: 3, message: 'Street Cred +3' },
+          ],
+          failure: [
+            { type: 'health', value: -25, message: 'They beat you down. -25 HP.' },
+            { type: 'credits', value: -300, message: 'They take ¥300 for your trouble.' },
+            { type: 'message', message: '"Should\'ve paid when you had the chance."' },
+          ],
+        },
+      },
+      {
+        id: 'talk', text: 'Talk your way out',
+        skillCheck: { skill: 'persuasion', difficulty: 15 },
+        outcomes: {
+          success: [
+            { type: 'message', message: 'You convince them you\'re more useful as an ally than a cash cow. They back off.' },
+            { type: 'experience', value: 25, message: '+25 XP' },
+          ],
+          failure: [
+            { type: 'credits', value: -200, message: 'Your words fail. They take ¥200 anyway.' },
+            { type: 'message', message: '"Nice try. Pay up."' },
+          ],
+        },
+      },
+    ],
+  },
+  {
+    id: 'faction_exclusive_job', title: 'Faction Contract', category: 'faction',
+    description: 'Your comm buzzes with a priority message: "We have a job that requires someone we trust. The pay is exceptional, but this stays between us. Are you in?"',
+    conditions: [], // Dynamically gated by faction standing (Allied) in event system
+    weight: 5, repeatable: true, cooldownDays: 7,
+    choices: [
+      {
+        id: 'accept', text: 'Accept the contract',
+        skillCheck: { skill: 'streetwise', difficulty: 14 },
+        outcomes: {
+          success: [
+            { type: 'credits', value: 2000, message: 'Job complete. Earned ¥2000!' },
+            { type: 'experience', value: 80, message: '+80 XP' },
+            { type: 'street_cred', value: 8, message: 'Street Cred +8' },
+            { type: 'message', message: '"Clean work. We\'ll be in touch for more."' },
+          ],
+          failure: [
+            { type: 'credits', value: 500, message: 'Partial success. Earned ¥500.' },
+            { type: 'experience', value: 30, message: '+30 XP' },
+            { type: 'message', message: '"Not your best work. We\'ll give you another chance."' },
+          ],
+        },
+      },
+      {
+        id: 'negotiate', text: 'Negotiate for better terms',
+        skillCheck: { skill: 'persuasion', difficulty: 16 },
+        outcomes: {
+          success: [
+            { type: 'credits', value: 3000, message: 'Negotiated premium rate: ¥3000!' },
+            { type: 'experience', value: 80, message: '+80 XP' },
+            { type: 'street_cred', value: 10, message: 'Street Cred +10' },
+            { type: 'message', message: '"You drive a hard bargain. But you\'re worth it."' },
+          ],
+          failure: [
+            { type: 'message', message: '"Take it or leave it." The offer stands at standard rate.' },
+            { type: 'credits', value: 2000, message: 'Earned ¥2000.' },
+            { type: 'experience', value: 60, message: '+60 XP' },
+          ],
+        },
+      },
+      {
+        id: 'decline', text: 'Not right now',
+        outcomes: {
+          success: [
+            { type: 'message', message: '"Understood. The offer doesn\'t last forever, but we respect your choice."' },
+          ],
+        },
+      },
+    ],
+  },
+  {
+    id: 'faction_power_play', title: 'Power Play', category: 'faction',
+    description: 'Two factions are about to clash over a disputed weapons cache. Both sides have made it clear: you can tip the balance. The question is — whose side are you on?',
+    conditions: [{ type: 'street_cred', target: '', operator: '>=', value: 40 }],
+    weight: 4, repeatable: true, cooldownDays: 10,
+    choices: [
+      {
+        id: 'side_a', text: 'Help the controlling faction',
+        skillCheck: { skill: 'combat', difficulty: 15 },
+        outcomes: {
+          success: [
+            { type: 'credits', value: 800, message: 'Earned ¥800 for your loyalty.' },
+            { type: 'experience', value: 50, message: '+50 XP' },
+            { type: 'street_cred', value: 5, message: 'Street Cred +5' },
+            { type: 'message', message: 'The controlling faction wins. They remember your contribution.' },
+          ],
+          failure: [
+            { type: 'health', value: -20, message: 'The fight was brutal. -20 HP.' },
+            { type: 'experience', value: 20, message: '+20 XP' },
+            { type: 'message', message: 'You held the line, barely. But the effort was noticed.' },
+          ],
+        },
+      },
+      {
+        id: 'side_b', text: 'Help the rival faction',
+        skillCheck: { skill: 'combat', difficulty: 15 },
+        outcomes: {
+          success: [
+            { type: 'credits', value: 1000, message: 'Earned ¥1000 from the rival faction.' },
+            { type: 'experience', value: 50, message: '+50 XP' },
+            { type: 'street_cred', value: 5, message: 'Street Cred +5' },
+            { type: 'message', message: 'The rivals win the cache. Your name is known to them now.' },
+          ],
+          failure: [
+            { type: 'health', value: -20, message: 'The fight didn\'t go as planned. -20 HP.' },
+            { type: 'experience', value: 20, message: '+20 XP' },
+            { type: 'message', message: 'You fought, but the rivals still lost. At least you tried.' },
+          ],
+        },
+      },
+      {
+        id: 'play_both', text: 'Play both sides',
+        skillCheck: { skill: 'persuasion', difficulty: 18 },
+        outcomes: {
+          success: [
+            { type: 'credits', value: 1500, message: 'Collected from both sides: ¥1500!' },
+            { type: 'experience', value: 60, message: '+60 XP' },
+            { type: 'street_cred', value: 8, message: 'Street Cred +8' },
+            { type: 'message', message: 'You sold information to both sides and walked away richer. Risky, but brilliant.' },
+          ],
+          failure: [
+            { type: 'health', value: -15, message: 'Both sides figured it out. -15 HP.' },
+            { type: 'credits', value: -300, message: 'Lost ¥300 fleeing the fallout.' },
+            { type: 'message', message: 'Playing both sides backfired. Hard.' },
+          ],
+        },
+      },
+      {
+        id: 'stay_out', text: 'Stay out of it',
+        outcomes: {
+          success: [
+            { type: 'message', message: 'You watch from a distance as the factions clash. Smart to stay neutral. This time.' },
+          ],
+        },
+      },
+    ],
+  },
   {
     id: 'corpo_drone', title: 'Corporate Drone Crash', category: 'random_encounter',
     description: 'A Kenzaki delivery drone sparks and crashes at your feet. Its cargo bay pops open, spilling packages on the ground. Alarms start blaring.',
@@ -441,8 +645,43 @@ export function getEligibleEvents(state: import('../types').GameState): GameEven
       }
     }
 
+    // Faction events have dynamic standing gates
+    if (event.category === 'faction') {
+      if (!checkFactionEventEligibility(state, event.id)) {
+        return false;
+      }
+    }
+
     return true;
   });
+}
+
+/**
+ * Gate faction events by the player's standing with the controlling faction
+ * in their current district.
+ */
+function checkFactionEventEligibility(state: import('../types').GameState, eventId: string): boolean {
+  const district = getDistrict(state.character.currentDistrict);
+  if (!district?.controllingFaction) return false;
+
+  const faction = getFaction(district.controllingFaction);
+  if (!faction) return false;
+
+  const rep = state.character.reputation[faction.id] ?? 0;
+  const standing = getFactionStanding(rep, faction);
+
+  switch (eventId) {
+    case 'faction_ally_aid':
+      return standing === 'Friendly' || standing === 'Allied';
+    case 'faction_territory_tax':
+      return standing === 'Hostile' || standing === 'Enemy';
+    case 'faction_exclusive_job':
+      return standing === 'Allied';
+    case 'faction_power_play':
+      return true; // Uses its own conditions, available in any faction territory
+    default:
+      return true;
+  }
 }
 
 function checkEventCondition(state: import('../types').GameState, cond: import('../types').EventCondition): boolean {

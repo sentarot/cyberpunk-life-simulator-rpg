@@ -2,6 +2,7 @@ import { GameState, Character, GameSettings, TimeOfDay, LogEntry, EventOutcome, 
 import { clamp } from '../utils/dice';
 import { createInitialProgression } from '../systems/progression';
 import { getPerkBonus } from '../data/perks';
+import { applyFactionRivalry, checkFactionStandingMilestone } from '../systems/factions';
 
 const DEFAULT_SETTINGS: GameSettings = {
   difficulty: 'normal',
@@ -76,8 +77,14 @@ export function applyOutcome(state: GameState, outcome: EventOutcome): string {
 
     case 'reputation':
       if (outcome.target) {
-        const current = char.reputation[outcome.target] ?? 0;
-        char.reputation[outcome.target] = clamp(current + value, -100, 100);
+        const oldRep = char.reputation[outcome.target] ?? 0;
+        char.reputation[outcome.target] = clamp(oldRep + value, -100, 100);
+        const newRep = char.reputation[outcome.target];
+        // Apply faction rivalry and standing milestones
+        if (value > 0) {
+          applyFactionRivalry(state, outcome.target, value);
+        }
+        checkFactionStandingMilestone(state, outcome.target, oldRep, newRep);
       }
       return outcome.message;
 
@@ -200,6 +207,10 @@ export function getEffectiveSkill(char: Character, skill: SkillName): number {
   // Perk bonuses
   if (char.perks && char.perks.length > 0) {
     value += getPerkBonus(char.perks, 'skill_bonus', skill);
+  }
+  // Ghost contact: +8 hacking in Undercity
+  if (skill === 'hacking' && char.currentDistrict === 'undercity' && char.contacts.includes('netrunner_ghost')) {
+    value += 8;
   }
   return value;
 }

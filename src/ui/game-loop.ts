@@ -21,6 +21,8 @@ import { chance, roll } from '../utils/dice';
 import { awardStreetCred, getCombatStreetCred, getTierName, getTierDescription, getActName } from '../systems/progression';
 import { getAvailableMilestones } from '../data/milestones';
 import { getPerkTierForLevel, getPerksForTier, getPerkBonus, STAT_POINTS_PER_LEVEL, SKILL_POINTS_PER_LEVEL, Perk } from '../data/perks';
+import { checkFactionAmbush, getEffectiveDanger, getShopPriceModifier, isServiceRefused, getDistrictFactionStanding, shouldReduceEncounter, getMayaBarBonus, getHealingDiscount } from '../systems/factions';
+import { getFaction, getFactionStanding } from '../data/factions';
 
 export class GameLoop {
   private state!: GameState;
@@ -233,6 +235,9 @@ export class GameLoop {
       console.log(ambience);
     }
 
+    // Check for faction ambush (hostile/enemy territory)
+    await this.checkFactionAmbush();
+
     // Check for milestone events (narrative progression)
     await this.checkMilestones();
 
@@ -366,8 +371,10 @@ export class GameLoop {
   }
 
   private barMenu(): void {
+    const mayaBonus = getMayaBarBonus(this.state);
+    const drinkHeal = 5 + mayaBonus.extraHP;
     const options: MenuOption[] = [
-      { key: '1', label: 'Have a drink (¥10)', description: 'Relax and recover a bit' },
+      { key: '1', label: `Have a drink (¥10)`, description: `Relax and recover ${drinkHeal} HP` },
       { key: '2', label: 'Talk to patrons', description: 'Gather intel' },
       { key: '3', label: 'Look for NPCs', description: 'See who\'s around' },
       { key: 'b', label: 'Leave' },
@@ -378,16 +385,19 @@ export class GameLoop {
       case '1':
         if (this.state.character.credits >= 10) {
           this.state.character.credits -= 10;
-          this.state.character.health = Math.min(this.state.character.maxHealth, this.state.character.health + 5);
-          console.log(chalk.green('  You enjoy a drink. +5 HP. -¥10.'));
+          this.state.character.health = Math.min(this.state.character.maxHealth, this.state.character.health + drinkHeal);
+          const mayaNote = mayaBonus.extraHP > 0 ? ' (Maya\'s special)' : '';
+          console.log(chalk.green(`  You enjoy a drink. +${drinkHeal} HP. -¥10.${mayaNote}`));
         } else {
           console.log(chalk.red('  Can\'t afford a drink.'));
         }
         break;
       case '2':
         console.log(chalk.italic('  You overhear conversations about the latest happenings...'));
-        this.state.character.skills.streetwise = Math.min(100, this.state.character.skills.streetwise + 1);
-        console.log(chalk.green('  Streetwise +1'));
+        const skillGain = 1 + mayaBonus.extraSkill;
+        this.state.character.skills.streetwise = Math.min(100, this.state.character.skills.streetwise + skillGain);
+        const mayaIntel = mayaBonus.extraSkill > 0 ? ' (Maya\'s intel)' : '';
+        console.log(chalk.green(`  Streetwise +${skillGain}${mayaIntel}`));
         break;
       case '3':
         this.talkToNPCs();
@@ -397,15 +407,34 @@ export class GameLoop {
   }
 
   private shopMenu(): void {
-    const items = getShopItems(this.state.character.currentDistrict);
-    console.log(chalk.bold('\n  === SHOP ==='));
-    console.log(`  Your credits: ${formatCredits(this.state.character.credits)}\n`);
+    // Check faction standing — enemy factions refuse service
+    if (isServiceRefused(this.state)) {
+      const factionInfo = getDistrictFactionStanding(this.state);
+      const fName = factionInfo?.faction.name ?? 'The local faction';
+      console.log(chalk.red(`\n  The shopkeeper crosses their arms.`));
+      console.log(chalk.red(`  "We don't serve enemies of ${fName}. Move along."`));
+      waitForKey();
+      return;
+    }
 
-    const options: MenuOption[] = items.map((item, i) => ({
-      key: String(i + 1),
-      label: `${item.name} - ${formatCredits(item.value)}`,
-      description: item.description,
-    }));
+    const items = getShopItems(this.state.character.currentDistrict);
+    const priceMod = getShopPriceModifier(this.state);
+    console.log(chalk.bold('\n  === SHOP ==='));
+    console.log(`  Your credits: ${formatCredits(this.state.character.credits)}`);
+    if (priceMod !== 1) {
+      const label = priceMod < 1 ? chalk.green('Faction discount active!') : chalk.red('Faction markup in effect');
+      console.log(`  ${label}`);
+    }
+    console.log('');
+
+    const options: MenuOption[] = items.map((item, i) => {
+      const adjustedPrice = Math.floor(item.value * priceMod);
+      return {
+        key: String(i + 1),
+        label: `${item.name} - ${formatCredits(adjustedPrice)}`,
+        description: item.description,
+      };
+    });
     options.push({ key: 's', label: 'Sell items' });
     options.push({ key: 'b', label: 'Leave' });
 
@@ -418,7 +447,8 @@ export class GameLoop {
 
     const index = parseInt(choice) - 1;
     if (index >= 0 && index < items.length) {
-      const result = buyItem(this.state.character, items[index]);
+      const adjustedPrice = Math.floor(items[index].value * priceMod);
+      const result = buyItem(this.state.character, items[index], adjustedPrice);
       console.log(result.success ? chalk.green(`  ${result.message}`) : chalk.red(`  ${result.message}`));
     }
     waitForKey();
@@ -441,9 +471,26 @@ export class GameLoop {
   }
 
   private clinicMenu(): void {
+    // Check faction standing — enemy factions refuse service
+    if (isServiceRefused(this.state)) {
+      const factionInfo = getDistrictFactionStanding(this.state);
+      const fName = factionInfo?.faction.name ?? 'The local faction';
+      console.log(chalk.red(`\n  The ripperdoc looks you over and shakes their head.`));
+      console.log(chalk.red(`  "${fName} says you're not welcome here. Get out before I call security."`));
+      waitForKey();
+      return;
+    }
+
+    const discount = getHealingDiscount(this.state);
+    const priceMod = getShopPriceModifier(this.state);
+    const healCost = Math.floor(100 * priceMod * (1 - discount));
+    const fullCost = Math.floor(300 * priceMod * (1 - discount));
+    const discountNote = discount > 0 ? chalk.cyan(' (Vex discount)') : '';
+    const factionNote = priceMod !== 1 ? chalk.gray(` [faction ${priceMod < 1 ? 'discount' : 'markup'}]`) : '';
+
     const options: MenuOption[] = [
-      { key: '1', label: `Heal (¥100)`, description: 'Restore 30 HP' },
-      { key: '2', label: `Full Heal (¥300)`, description: 'Restore all HP' },
+      { key: '1', label: `Heal (¥${healCost})`, description: `Restore 30 HP${discountNote}${factionNote}` },
+      { key: '2', label: `Full Heal (¥${fullCost})`, description: `Restore all HP${discountNote}${factionNote}` },
       { key: '3', label: 'Augmentations', description: 'Install cybernetic enhancements' },
       { key: 'b', label: 'Leave' },
     ];
@@ -451,19 +498,19 @@ export class GameLoop {
 
     switch (choice) {
       case '1':
-        if (this.state.character.credits >= 100) {
-          this.state.character.credits -= 100;
+        if (this.state.character.credits >= healCost) {
+          this.state.character.credits -= healCost;
           this.state.character.health = Math.min(this.state.character.maxHealth, this.state.character.health + 30);
-          console.log(chalk.green('  Healed 30 HP.'));
+          console.log(chalk.green(`  Healed 30 HP. -¥${healCost}.`));
         } else {
           console.log(chalk.red('  Not enough credits.'));
         }
         break;
       case '2':
-        if (this.state.character.credits >= 300) {
-          this.state.character.credits -= 300;
+        if (this.state.character.credits >= fullCost) {
+          this.state.character.credits -= fullCost;
           this.state.character.health = this.state.character.maxHealth;
-          console.log(chalk.green('  Fully healed!'));
+          console.log(chalk.green(`  Fully healed! -¥${fullCost}.`));
         } else {
           console.log(chalk.red('  Not enough credits.'));
         }
@@ -600,10 +647,10 @@ export class GameLoop {
   private async alleyExplore(): Promise<void> {
     console.log(chalk.italic('  You venture into the dark alleys...'));
 
-    if (chance(0.4)) {
-      // Combat encounter — scales with player level
-      const district = getDistrict(this.state.character.currentDistrict);
-      const enemy = getRandomEnemy(district?.danger ?? 'medium', this.state.character.level);
+    if (chance(0.4) && !shouldReduceEncounter(this.state)) {
+      // Combat encounter — scales with player level and faction standing
+      const effectiveDanger = getEffectiveDanger(this.state);
+      const enemy = getRandomEnemy(effectiveDanger, this.state.character.level);
       console.log(chalk.red(`\n  An enemy appears: ${enemy.name}!`));
       await this.runCombat(enemy);
     } else if (chance(0.3)) {
@@ -680,11 +727,16 @@ export class GameLoop {
       return;
     }
 
-    const options: MenuOption[] = districtNPCs.map((npc, i) => ({
-      key: String(i + 1),
-      label: `${npc.name}`,
-      description: npc.title,
-    }));
+    const options: MenuOption[] = districtNPCs.map((npc, i) => {
+      const isContact = this.state.character.contacts.includes(npc.id);
+      const contactTag = isContact ? chalk.green(' [Contact]') : '';
+      const factionTag = npc.faction ? chalk.gray(` (${npc.faction})`) : '';
+      return {
+        key: String(i + 1),
+        label: `${npc.name}${contactTag}${factionTag}`,
+        description: npc.title,
+      };
+    });
     options.push({ key: 'b', label: 'Back' });
 
     const choice = showMenu('Talk to someone', options);
@@ -693,6 +745,27 @@ export class GameLoop {
     const npcIndex = parseInt(choice) - 1;
     const npc = districtNPCs[npcIndex];
     if (!npc) return;
+
+    // Faction-aligned NPCs react to your standing
+    if (npc.faction) {
+      const faction = getFaction(npc.faction);
+      if (faction) {
+        const rep = this.state.character.reputation[npc.faction] ?? 0;
+        const standing = getFactionStanding(rep, faction);
+        if (standing === 'Enemy') {
+          console.log(chalk.red(`\n  ${npc.name} sees you and reaches for a weapon.`));
+          console.log(chalk.red(`  "You've got a lot of nerve showing your face here. Get lost before I make you."`));
+          waitForKey();
+          return;
+        } else if (standing === 'Hostile') {
+          console.log(chalk.yellow(`\n  ${npc.name} eyes you coldly.`));
+          console.log(chalk.yellow(`  "Make it quick. I don't have time for people like you."`));
+        } else if (standing === 'Allied') {
+          console.log(chalk.green(`\n  ${npc.name} greets you warmly.`));
+          console.log(chalk.green(`  "Good to see you, choom. What can I do for a friend?"`));
+        }
+      }
+    }
 
     this.npcConversation(npc);
   }
@@ -806,10 +879,11 @@ export class GameLoop {
     await playTravelAnimation(fromDistrict, district.name);
     messages.forEach(m => console.log(`  ${m}`));
 
-    // Chance of encounter while traveling — scales with player level
-    if (chance(0.2)) {
+    // Chance of encounter while traveling — scales with player level and faction standing
+    if (chance(0.2) && !shouldReduceEncounter(this.state)) {
       console.log(chalk.yellow('\n  Trouble on the road!'));
-      const enemy = getRandomEnemy(district.danger, this.state.character.level);
+      const effectiveDanger = getEffectiveDanger(this.state);
+      const enemy = getRandomEnemy(effectiveDanger, this.state.character.level);
       await this.runCombat(enemy);
     }
     waitForKey();
@@ -1125,6 +1199,21 @@ export class GameLoop {
 
     // Return to exploration music
     this.music.play('exploration');
+  }
+
+  private async checkFactionAmbush(): Promise<void> {
+    const ambushFactionId = checkFactionAmbush(this.state);
+    if (!ambushFactionId) return;
+
+    const faction = getFaction(ambushFactionId);
+    const fName = faction?.name ?? ambushFactionId;
+    console.log('');
+    console.log(chalk.red.bold(`  ⚠ ${fName.toUpperCase()} AMBUSH!`));
+    console.log(chalk.red(`  A ${fName} hit squad has been dispatched. They know you're on their turf.`));
+
+    const effectiveDanger = getEffectiveDanger(this.state);
+    const enemy = getRandomEnemy(effectiveDanger, this.state.character.level);
+    await this.runCombat(enemy);
   }
 
   private async checkMilestones(): Promise<void> {

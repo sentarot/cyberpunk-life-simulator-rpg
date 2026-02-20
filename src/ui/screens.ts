@@ -6,6 +6,7 @@ import { getFaction, getFactionStanding, FACTIONS } from '../data/factions';
 import { getXPForLevel } from '../engine/state';
 import { getTierName, getActName, getNextTierCred } from '../systems/progression';
 import { getPerkById, PERK_LEVELS } from '../data/perks';
+import { getActiveContactBonuses, getDistrictStandingEffects, getDistrictFactionStanding } from '../systems/factions';
 
 export function showTitleScreen(): void {
   console.log(chalk.cyan(`
@@ -147,6 +148,20 @@ export function showCharacterSheet(char: Character, prog?: ProgressionState): vo
     console.log(chalk.gray(`  First perk available at level 3`));
   }
 
+  if (char.contacts.length > 0) {
+    console.log(sectionHeader('CONTACTS'));
+    // Show contacts with their bonuses
+    const bonuses = getActiveContactBonuses({ character: char } as GameState);
+    for (const contactId of char.contacts) {
+      const bonus = bonuses.find(b => b.id === contactId);
+      if (bonus) {
+        console.log(`  ${chalk.cyan('●')} ${chalk.bold(bonus.name)} - ${chalk.green(bonus.description)}`);
+      } else {
+        console.log(`  ${chalk.gray('●')} ${contactId}`);
+      }
+    }
+  }
+
   if (char.traits.length > 0) {
     console.log(sectionHeader('TRAITS'));
     console.log(`  ${char.traits.join(', ')}`);
@@ -185,7 +200,31 @@ export function showDistrictInfo(state: GameState): void {
     if (faction) {
       const rep = state.character.reputation[faction.id] ?? 0;
       const standing = getFactionStanding(rep, faction);
-      console.log(`  Controlled by: ${chalk.bold(faction.name)} (${standing})`);
+
+      let standingColor: (s: string) => string;
+      switch (standing) {
+        case 'Allied': standingColor = chalk.greenBright; break;
+        case 'Friendly': standingColor = chalk.green; break;
+        case 'Neutral': standingColor = chalk.gray; break;
+        case 'Hostile': standingColor = chalk.yellow; break;
+        case 'Enemy': standingColor = chalk.red; break;
+        default: standingColor = chalk.gray;
+      }
+      console.log(`  Controlled by: ${chalk.bold(faction.name)} — ${standingColor(standing)}`);
+
+      // Show standing effects
+      const effects = getDistrictStandingEffects(state);
+      const activeEffects: string[] = [];
+      if (effects.refuseService) activeEffects.push(chalk.red('Service refused'));
+      if (effects.priceModifier < 1) activeEffects.push(chalk.green(`${Math.round((1 - effects.priceModifier) * 100)}% discount`));
+      if (effects.priceModifier > 1) activeEffects.push(chalk.red(`${Math.round((effects.priceModifier - 1) * 100)}% markup`));
+      if (effects.dangerShift < 0) activeEffects.push(chalk.green('Reduced danger'));
+      if (effects.dangerShift > 0) activeEffects.push(chalk.red('Increased danger'));
+      if (effects.ambushChance > 0) activeEffects.push(chalk.red(`Ambush risk: ${Math.round(effects.ambushChance * 100)}%`));
+      if (effects.jobPayBonus > 0) activeEffects.push(chalk.green(`+${effects.jobPayBonus}% job pay`));
+      if (activeEffects.length > 0) {
+        console.log(`  Standing effects: ${activeEffects.join(chalk.gray(' | '))}`);
+      }
     }
   }
 
@@ -229,12 +268,47 @@ export function showJobDetails(job: Job): void {
 
 export function showFactionStandings(char: Character): void {
   console.log(header('FACTION STANDINGS'));
-  // FACTIONS imported at top level
   for (const faction of FACTIONS) {
     const rep = char.reputation[faction.id] ?? 0;
     const standing = getFactionStanding(rep, faction);
     const bar = progressBar(rep + 100, 200, 15);
-    console.log(`  ${chalk.bold(faction.name.padEnd(20))} ${standing.padEnd(10)} ${bar}`);
+
+    // Color-code standing
+    let standingColor: (s: string) => string;
+    switch (standing) {
+      case 'Allied': standingColor = chalk.greenBright; break;
+      case 'Friendly': standingColor = chalk.green; break;
+      case 'Neutral': standingColor = chalk.gray; break;
+      case 'Hostile': standingColor = chalk.yellow; break;
+      case 'Enemy': standingColor = chalk.red; break;
+      default: standingColor = chalk.gray;
+    }
+    console.log(`  ${chalk.bold(faction.name.padEnd(20))} ${standingColor(standing.padEnd(10))} ${bar}`);
+
+    // Show effects for non-neutral standings
+    const effects: string[] = [];
+    switch (standing) {
+      case 'Allied':
+        effects.push(chalk.green('20% shop discount'), chalk.green('+25% job pay'), chalk.green('reduced danger'));
+        break;
+      case 'Friendly':
+        effects.push(chalk.green('10% shop discount'), chalk.green('+10% job pay'), chalk.green('slightly safer'));
+        break;
+      case 'Hostile':
+        effects.push(chalk.yellow('30% shop markup'), chalk.yellow('ambush risk'), chalk.yellow('increased danger'));
+        break;
+      case 'Enemy':
+        effects.push(chalk.red('service refused'), chalk.red('high ambush risk'), chalk.red('extreme danger'));
+        break;
+    }
+    if (effects.length > 0) {
+      console.log(`  ${' '.repeat(20)} ${effects.join(chalk.gray(' | '))}`);
+    }
+
+    // Show territory
+    if (faction.territory.length > 0) {
+      console.log(`  ${' '.repeat(20)} ${chalk.gray('Territory: ' + faction.territory.join(', '))}`);
+    }
   }
 }
 

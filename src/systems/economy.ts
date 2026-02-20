@@ -4,6 +4,7 @@ import { getEffectiveSkill, getEffectiveStat, getDifficultyModifier, applyOutcom
 import { addItem, removeItem } from './character';
 import { awardStreetCred, getJobStreetCred } from './progression';
 import { getPerkBonus } from '../data/perks';
+import { getFactionJobPayMultiplier, getContactJobPayMultiplier, applyFactionRivalry, checkFactionStandingMilestone } from './factions';
 
 export function canTakeJob(state: GameState, job: Job): { eligible: boolean; reason?: string } {
   const char = state.character;
@@ -56,20 +57,33 @@ export function executeJob(state: GameState, job: Job): { success: boolean; mess
   if (result.success) {
     messages.push(`Job completed successfully! (Rolled ${result.roll} + ${modifier} = ${result.total} vs ${difficulty})`);
 
-    // Pay
-    const pay = Math.floor(job.payCredits * (1 + char.stats.luck / 20));
+    // Pay (with faction standing bonus and contact bonus)
+    const basePay = Math.floor(job.payCredits * (1 + char.stats.luck / 20));
+    const factionPayMult = getFactionJobPayMultiplier(state, job.reputationReward?.faction ?? null);
+    const contactPayMult = getContactJobPayMultiplier(state);
+    const pay = Math.floor(basePay * factionPayMult * contactPayMult);
     char.credits += pay;
-    messages.push(`Earned ¥${pay}`);
+    const bonusNote = (factionPayMult > 1 || contactPayMult > 1) ? ' (faction/contact bonus)' : '';
+    messages.push(`Earned ¥${pay}${bonusNote}`);
 
     // Experience
     char.experience += job.payExperience;
     messages.push(`Gained ${job.payExperience} XP`);
 
-    // Reputation
+    // Reputation + Rivalry
     if (job.reputationReward) {
-      const current = char.reputation[job.reputationReward.faction] ?? 0;
-      char.reputation[job.reputationReward.faction] = Math.min(100, current + job.reputationReward.amount);
+      const oldRep = char.reputation[job.reputationReward.faction] ?? 0;
+      char.reputation[job.reputationReward.faction] = Math.min(100, oldRep + job.reputationReward.amount);
+      const newRep = char.reputation[job.reputationReward.faction];
       messages.push(`${job.reputationReward.faction} reputation +${job.reputationReward.amount}`);
+
+      // Faction rivalry
+      const rivalryMsgs = applyFactionRivalry(state, job.reputationReward.faction, job.reputationReward.amount);
+      messages.push(...rivalryMsgs);
+
+      // Standing milestone check
+      const standingMsgs = checkFactionStandingMilestone(state, job.reputationReward.faction, oldRep, newRep);
+      messages.push(...standingMsgs);
     }
 
     // Skill improvement
