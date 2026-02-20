@@ -2,6 +2,7 @@ import { Character, CombatState, Enemy, CombatEffect } from '../types';
 import { d20, roll, chance, clamp } from '../utils/dice';
 import { getEffectiveStat, getEffectiveSkill, getDifficultyModifier } from '../engine/state';
 import { GameState } from '../types';
+import { getPerkBonus } from '../data/perks';
 
 export function initCombat(character: Character, enemy: Enemy): CombatState {
   return {
@@ -29,7 +30,10 @@ export function playerAttack(state: GameState, combat: CombatState, enemy: Enemy
   const total = attackRoll + attackBonus;
   const defense = 10 + Math.floor(enemy.level * 1.5 * diffMod);
 
-  if (attackRoll === 20) {
+  const perkCritChance = char.perks ? getPerkBonus(char.perks, 'crit_chance') : 0;
+  const isCrit = attackRoll === 20 || (perkCritChance > 0 && attackRoll >= (21 - Math.floor(perkCritChance / 5)));
+
+  if (isCrit && total >= defense) {
     // Critical hit
     const baseDamage = getPlayerDamage(char);
     const critDamage = baseDamage * 2;
@@ -59,7 +63,8 @@ export function enemyAttack(state: GameState, combat: CombatState, enemy: Enemy)
   const attackRoll = d20();
   const attackTotal = attackRoll + Math.floor(enemy.level * diffMod);
   const playerDefense = 10 + Math.floor(getEffectiveStat(char, 'reflexes') / 2);
-  const armorReduction = char.equipped.armor?.effects?.reduce((sum, e) => sum + (e.stat === 'body' ? e.modifier : 0), 0) ?? 0;
+  const armorReduction = (char.equipped.armor?.effects?.reduce((sum, e) => sum + (e.stat === 'body' ? e.modifier : 0), 0) ?? 0)
+    + (char.perks ? getPerkBonus(char.perks, 'armor_bonus') : 0);
 
   if (attackRoll === 1) {
     messages.push(`${enemy.name} fumbles their attack!`);
@@ -90,7 +95,9 @@ export function playerHack(state: GameState, combat: CombatState, enemy: Enemy):
   const resistance = 10 + enemy.level * 2;
 
   if (total >= resistance) {
-    const damage = roll(5, 15) + Math.floor(getEffectiveSkill(char, 'hacking') / 5);
+    const hackDmgPerkBonus = char.perks ? getPerkBonus(char.perks, 'hack_damage') : 0;
+    const baseHackDmg = roll(5, 15) + Math.floor(getEffectiveSkill(char, 'hacking') / 5);
+    const damage = hackDmgPerkBonus > 0 ? Math.floor(baseHackDmg * (1 + hackDmgPerkBonus / 100)) : baseHackDmg;
     combat.enemyHealth = Math.max(0, combat.enemyHealth - damage);
     messages.push(`Hack successful! Dealt ${damage} neural damage.`);
 
@@ -184,8 +191,9 @@ export function getCombatRewards(enemy: Enemy): { credits: number; experience: n
 
 function getPlayerDamage(char: Character): number {
   const weaponDamage = char.equipped.weapon?.effects?.reduce((sum, e) => sum + e.modifier, 0) ?? 0;
+  const perkDamage = char.perks ? getPerkBonus(char.perks, 'damage_bonus') : 0;
   const baseDamage = roll(3, 8) + Math.floor(char.stats.body / 3);
-  return baseDamage + weaponDamage;
+  return baseDamage + weaponDamage + perkDamage;
 }
 
 export function getPlayerCombatStats(char: Character) {

@@ -63,6 +63,7 @@ export function createCharacter(name: string, origin: CharacterOrigin, statPoint
     stats,
     skills,
     augmentations: [],
+    perks: [],
     level: 1,
     experience: 0,
     health: maxHealth,

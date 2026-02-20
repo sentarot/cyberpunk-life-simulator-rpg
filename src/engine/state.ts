@@ -1,6 +1,7 @@
 import { GameState, Character, GameSettings, TimeOfDay, LogEntry, EventOutcome, StatName, SkillName } from '../types';
 import { clamp } from '../utils/dice';
 import { createInitialProgression } from '../systems/progression';
+import { getPerkBonus } from '../data/perks';
 
 const DEFAULT_SETTINGS: GameSettings = {
   difficulty: 'normal',
@@ -61,10 +62,13 @@ export function applyOutcome(state: GameState, outcome: EventOutcome): string {
       char.credits = Math.max(0, char.credits + value);
       return outcome.message;
 
-    case 'experience':
-      char.experience += value;
+    case 'experience': {
+      const xpBonus = (char.perks?.length > 0) ? getPerkBonus(char.perks, 'xp_bonus') : 0;
+      const xpGain = xpBonus > 0 ? Math.floor(value * (1 + xpBonus / 100)) : value;
+      char.experience += xpGain;
       checkLevelUp(char);
       return outcome.message;
+    }
 
     case 'health':
       char.health = clamp(char.health + value, 0, char.maxHealth);
@@ -179,6 +183,10 @@ export function getEffectiveStat(char: Character, stat: StatName): number {
       }
     }
   }
+  // Perk bonuses
+  if (char.perks && char.perks.length > 0) {
+    value += getPerkBonus(char.perks, 'stat_bonus', stat);
+  }
   return value;
 }
 
@@ -188,6 +196,10 @@ export function getEffectiveSkill(char: Character, skill: SkillName): number {
     if (aug.skillBonuses[skill]) {
       value += aug.skillBonuses[skill]!;
     }
+  }
+  // Perk bonuses
+  if (char.perks && char.perks.length > 0) {
+    value += getPerkBonus(char.perks, 'skill_bonus', skill);
   }
   return value;
 }

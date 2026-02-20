@@ -3,17 +3,21 @@ import { chance, roll, clamp } from '../utils/dice';
 import { addLogEntry, advanceTime } from '../engine/state';
 import { processDailyExpenses } from './economy';
 import { awardStreetCred, getSurvivalStreetCred } from './progression';
+import { getPerkBonus } from '../data/perks';
 
 export function rest(state: GameState): string[] {
   const messages: string[] = [];
   const char = state.character;
+  const healPerkBonus = char.perks ? getPerkBonus(char.perks, 'heal_bonus') : 0;
 
   if (char.apartment) {
-    const healAmount = roll(15, 30);
+    const baseHeal = roll(15, 30);
+    const healAmount = healPerkBonus > 0 ? Math.floor(baseHeal * (1 + healPerkBonus / 100)) : baseHeal;
     char.health = clamp(char.health + healAmount, 0, char.maxHealth);
     messages.push(`Rested at your apartment. Recovered ${healAmount} HP.`);
   } else {
-    const healAmount = roll(5, 10);
+    const baseHeal = roll(5, 10);
+    const healAmount = healPerkBonus > 0 ? Math.floor(baseHeal * (1 + healPerkBonus / 100)) : baseHeal;
     char.health = clamp(char.health + healAmount, 0, char.maxHealth);
     messages.push(`Found a place to crash for the night. Recovered ${healAmount} HP.`);
     if (chance(0.15)) {
@@ -41,10 +45,13 @@ export function processNewDay(state: GameState): string[] {
     messages.push(`Natural regeneration: +${regen} HP`);
   }
 
-  // Humanity recovery (slow)
-  if (state.character.humanity < 100 && chance(0.1)) {
-    state.character.humanity = clamp(state.character.humanity + 1, 0, 100);
-    messages.push('Humanity slightly recovered.');
+  // Humanity recovery (slow, boosted by perks)
+  const humanityPerkBonus = state.character.perks ? getPerkBonus(state.character.perks, 'humanity_recovery') : 0;
+  const humanityRecoveryChance = 0.1 + (humanityPerkBonus * 0.05);
+  if (state.character.humanity < 100 && chance(humanityRecoveryChance)) {
+    const recoveryAmount = 1 + humanityPerkBonus;
+    state.character.humanity = clamp(state.character.humanity + recoveryAmount, 0, 100);
+    messages.push(`Humanity recovered +${recoveryAmount}.`);
   }
 
   // Low humanity effects

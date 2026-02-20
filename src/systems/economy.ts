@@ -3,6 +3,7 @@ import { check, chance, roll } from '../utils/dice';
 import { getEffectiveSkill, getEffectiveStat, getDifficultyModifier, applyOutcome, addLogEntry } from '../engine/state';
 import { addItem, removeItem } from './character';
 import { awardStreetCred, getJobStreetCred } from './progression';
+import { getPerkBonus } from '../data/perks';
 
 export function canTakeJob(state: GameState, job: Job): { eligible: boolean; reason?: string } {
   const char = state.character;
@@ -76,10 +77,12 @@ export function executeJob(state: GameState, job: Job): { success: boolean; mess
     char.skills[primarySkill] = Math.min(100, char.skills[primarySkill] + skillGain);
     messages.push(`${primarySkill} skill +${skillGain}`);
 
-    // Street cred
+    // Street cred (with perk bonus)
     if (state.progression) {
       state.progression.jobsCompleted++;
-      const credResult = awardStreetCred(state, getJobStreetCred(job.difficulty, true), job.name);
+      const baseCred = getJobStreetCred(job.difficulty, true);
+      const perkCredBonus = char.perks ? getPerkBonus(char.perks, 'cred_multiplier') : 0;
+      const credResult = awardStreetCred(state, baseCred + perkCredBonus, job.name);
       messages.push(...credResult.messages);
     }
 

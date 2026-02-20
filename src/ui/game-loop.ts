@@ -16,10 +16,11 @@ import { NPCS, getRandomEnemy } from '../data/npcs';
 import { getDistrictJobs, getJob } from '../data/jobs';
 import { getShopItems, getClinicAugmentations, getItem, ITEMS } from '../data/items';
 import { installAugmentation } from '../systems/character';
-import { formatCredits, divider, storyText, header } from '../utils/format';
+import { formatCredits, divider, storyText, header, sectionHeader, formatStatValue } from '../utils/format';
 import { chance, roll } from '../utils/dice';
 import { awardStreetCred, getCombatStreetCred, getTierName, getTierDescription, getActName } from '../systems/progression';
 import { getAvailableMilestones } from '../data/milestones';
+import { getPerkTierForLevel, getPerksForTier, getPerkBonus, STAT_POINTS_PER_LEVEL, SKILL_POINTS_PER_LEVEL, Perk } from '../data/perks';
 
 export class GameLoop {
   private state!: GameState;
@@ -208,9 +209,10 @@ export class GameLoop {
       return;
     }
 
-    // Check for level up
-    if (this.state.character.level > this.previousLevel) {
+    // Check for level up — full interactive allocation
+    while (this.state.character.level > this.previousLevel) {
       await playLevelUpAnimation(this.state.character.level);
+      this.handleLevelUpRewards();
       this.previousLevel = this.state.character.level;
     }
 
@@ -879,6 +881,105 @@ export class GameLoop {
 
   private characterMenu(): void {
     showCharacterSheet(this.state.character, this.state.progression);
+    waitForKey();
+  }
+
+  private handleLevelUpRewards(): void {
+    const char = this.state.character;
+    const level = char.level;
+
+    console.log(chalk.yellowBright.bold(`\n  ═══ LEVEL ${level} REWARDS ═══\n`));
+    console.log(chalk.green(`  +5 Max HP (now ${char.maxHealth})`));
+    console.log(chalk.green(`  Health fully restored!`));
+
+    // --- Stat Point Allocation ---
+    console.log(chalk.yellow(`\n  You have ${STAT_POINTS_PER_LEVEL} stat point(s) to allocate.\n`));
+    let statPointsLeft = STAT_POINTS_PER_LEVEL;
+    const statNames: (keyof Stats)[] = ['body', 'reflexes', 'tech', 'intelligence', 'cool', 'luck'];
+
+    while (statPointsLeft > 0) {
+      console.log(chalk.gray(`  Points remaining: ${statPointsLeft}`));
+      for (let i = 0; i < statNames.length; i++) {
+        const s = statNames[i];
+        const label = s.charAt(0).toUpperCase() + s.slice(1);
+        console.log(`    ${chalk.yellow(`[${i + 1}]`)} ${label.padEnd(14)} ${formatStatValue(char.stats[s])}`);
+      }
+
+      const choice = promptNumber('  Allocate point to stat (1-6)', 1, 6);
+      const stat = statNames[choice - 1];
+      char.stats[stat]++;
+      statPointsLeft--;
+      console.log(chalk.green(`  ${stat.charAt(0).toUpperCase() + stat.slice(1)} increased to ${char.stats[stat]}!`));
+
+      // Recalculate max health if body increased
+      if (stat === 'body') {
+        char.maxHealth = 50 + char.stats.body * 5;
+        char.health = char.maxHealth;
+        console.log(chalk.green(`  Max HP updated to ${char.maxHealth}!`));
+      }
+    }
+
+    // --- Skill Point Allocation ---
+    console.log(chalk.yellow(`\n  You have ${SKILL_POINTS_PER_LEVEL} skill points to distribute.\n`));
+    let skillPointsLeft = SKILL_POINTS_PER_LEVEL;
+    const skillNames: (keyof typeof char.skills)[] = ['combat', 'hacking', 'stealth', 'persuasion', 'engineering', 'streetwise', 'medicine', 'driving'];
+
+    while (skillPointsLeft > 0) {
+      console.log(chalk.gray(`  Points remaining: ${skillPointsLeft}`));
+      for (let i = 0; i < skillNames.length; i++) {
+        const s = skillNames[i];
+        const label = s.charAt(0).toUpperCase() + s.slice(1);
+        console.log(`    ${chalk.yellow(`[${i + 1}]`)} ${label.padEnd(14)} ${char.skills[s]}`);
+      }
+
+      const maxAlloc = Math.min(skillPointsLeft, 5);
+      const skillChoice = promptNumber('  Which skill? (1-8)', 1, 8);
+      const skill = skillNames[skillChoice - 1];
+      const amount = skillPointsLeft > 1
+        ? promptNumber(`  How many points for ${skill}? (1-${maxAlloc})`, 1, maxAlloc)
+        : 1;
+
+      char.skills[skill] = Math.min(100, char.skills[skill] + amount);
+      skillPointsLeft -= amount;
+      console.log(chalk.green(`  ${skill} increased to ${char.skills[skill]}!`));
+    }
+
+    // --- Perk Selection (at milestone levels) ---
+    const perkTier = getPerkTierForLevel(level);
+    if (perkTier !== null) {
+      const availablePerks = getPerksForTier(perkTier).filter(p => !char.perks.includes(p.id));
+      if (availablePerks.length > 0) {
+        console.log(chalk.magentaBright.bold(`\n  ★ PERK AVAILABLE (Tier ${perkTier}) ★\n`));
+
+        for (let i = 0; i < availablePerks.length; i++) {
+          const p = availablePerks[i];
+          const catColor = p.category === 'combat' ? chalk.red
+            : p.category === 'tech' ? chalk.cyan
+            : p.category === 'social' ? chalk.magenta
+            : chalk.green;
+          console.log(`  ${chalk.yellow(`[${i + 1}]`)} ${chalk.bold(p.name)} ${catColor(`[${p.category}]`)}`);
+          console.log(chalk.gray(`       ${p.description}`));
+        }
+
+        const perkChoice = promptNumber(`\n  Choose a perk (1-${availablePerks.length})`, 1, availablePerks.length);
+        const chosenPerk = availablePerks[perkChoice - 1];
+        char.perks.push(chosenPerk.id);
+
+        // Apply immediate effects (max health)
+        for (const effect of chosenPerk.effects) {
+          if (effect.type === 'max_health') {
+            char.maxHealth += effect.value;
+            char.health = char.maxHealth;
+          }
+        }
+
+        console.log(chalk.magentaBright(`\n  Perk acquired: ${chosenPerk.name}!`));
+        console.log(chalk.italic.white(`  "${chosenPerk.description}"`));
+      }
+    }
+
+    console.log(chalk.yellowBright(`\n  ═══════════════════════════\n`));
+    addLogEntry(this.state, `Reached level ${level}.`, 'reward');
     waitForKey();
   }
 

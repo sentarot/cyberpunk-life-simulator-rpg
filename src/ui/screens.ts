@@ -5,6 +5,7 @@ import { getDistrict } from '../data/districts';
 import { getFaction, getFactionStanding, FACTIONS } from '../data/factions';
 import { getXPForLevel } from '../engine/state';
 import { getTierName, getActName, getNextTierCred } from '../systems/progression';
+import { getPerkById, PERK_LEVELS } from '../data/perks';
 
 export function showTitleScreen(): void {
   console.log(chalk.cyan(`
@@ -121,6 +122,29 @@ export function showCharacterSheet(char: Character, prog?: ProgressionState): vo
     if (char.equipped.weapon) console.log(`  Weapon: ${chalk.red(char.equipped.weapon.name)}`);
     if (char.equipped.armor) console.log(`  Armor:  ${chalk.blue(char.equipped.armor.name)}`);
     if (char.equipped.cyberdeckProgram) console.log(`  Program: ${chalk.green(char.equipped.cyberdeckProgram.name)}`);
+  }
+
+  if (char.perks && char.perks.length > 0) {
+    console.log(sectionHeader('PERKS'));
+    for (const perkId of char.perks) {
+      const perk = getPerkById(perkId);
+      if (perk) {
+        const catColor = perk.category === 'combat' ? chalk.red
+          : perk.category === 'tech' ? chalk.cyan
+          : perk.category === 'social' ? chalk.magenta
+          : chalk.green;
+        console.log(`  ${catColor('●')} ${chalk.bold(perk.name)} - ${chalk.gray(perk.description)}`);
+      }
+    }
+    if (char.level < 10) {
+      const nextPerkLevel = PERK_LEVELS.find(l => l > char.level) ?? null;
+      if (nextPerkLevel) {
+        console.log(chalk.gray(`  Next perk at level ${nextPerkLevel}`));
+      }
+    }
+  } else if (char.level < 3) {
+    console.log(sectionHeader('PERKS'));
+    console.log(chalk.gray(`  First perk available at level 3`));
   }
 
   if (char.traits.length > 0) {

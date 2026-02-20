@@ -59,6 +59,7 @@ export interface Character {
   stats: Stats;
   skills: Skills;
   augmentations: Augmentation[];
+  perks: string[];        // Perk IDs chosen at milestone levels
   level: number;
   experience: number;
   health: number;
